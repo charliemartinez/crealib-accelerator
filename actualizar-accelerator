@@ -1,0 +1,368 @@
+#!/bin/bash
+
+# ======================================================================
+# Archivo:       actualizar-accelerator
+# Ruta:          Para convertir a comando copiar a /usr/local/bin/
+# Autor:         Charlie Martínez® <cmartinez@quirinux.org>
+# Licencia:      https://www.gnu.org/licenses/gpl-2.0.txt
+# Propósito:     Descarga Seraphinite y quita publicidad
+# Distribución:  Plugin para WordPress
+# ======================================================================
+
+# Este script descarga la versión más reciente de Seraphinite Accelerator, 
+# y haciendo uso de su licencia GPL modifica el código para quitar la
+# publicidad en el footer de nuestra web. 
+#
+# Instrucciones: 
+# 1) Ejecutar el script e instalar en WordpRess el plugin .zip
+# resultante. 
+# 2) Desactivar actualizaciones automáticas de plugins de WordPress
+# 3) Cuando WordPress detecte una nueva actualización, volver a ejecutar este
+# script, que descargará la versión más actual, para que la podamos subir
+# parcheada en reemplazo de la anterior. 
+#
+# Cómo usar el plugin:
+# Ir al panel de Accelerator y luego de actualizar alguna página de 
+# nuestra web, presionar los siguientes botones en el siguiente orden:
+#
+# 1) Delete server's cache (if available)
+# 2) Delete cache
+# 3) Revalidate cache if needed
+# 4) Revalidate cache. 
+#
+# No requiere configuración adicional. 
+#
+# Para verificar si hace buen efecto en nuestra web, recomiendo medir
+# el rendimiento antes y despues de su instalación y ejecución
+# con https://pagespeed.web.dev/
+#
+
+set -e
+
+# --------------------------------------------------------------------
+# Rutas
+# --------------------------------------------------------------------
+
+DOWNLOAD_URL="https://www.s-sols.com/data/products/wordpress/accelerator/Accelerator.zip"
+ZIP_NAME="Accelerator.zip"
+SRC_DIR="seraphinite-accelerator-ext"
+DST_DIR="crealib-accelerator"
+OUT_ZIP="crealib-accelerator.zip"
+
+# --------------------------------------------------------------------
+# Detección del idioma
+# --------------------------------------------------------------------
+
+LANG_CODE="${LANG%%_*}"
+LANG_CODE="${LANG_CODE:-en}"
+
+# --------------------------------------------------------------------
+# Traducciones
+# --------------------------------------------------------------------
+
+# Pantalla de bienvenida
+
+_banner() {
+    case "$LANG_CODE" in
+        es) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Autor: Charlie Martínez
+--------------------------------------------------------------------------------
+Este script descarga automáticamente la versión gratuita más reciente
+de Seraphinite Accelerator y, haciendo uso de las libertades otorgadas
+por su licencia GPL, aplica el parche Crealib para eliminar el sello
+de agua presente en la edición gratuita.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        gl) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Autor: Charlie Martínez
+--------------------------------------------------------------------------------
+Este script descarga automaticamente a versión gratuíta máis recente
+de Seraphinite Accelerator e, facendo uso das liberdades outorgadas
+pola súa licenza GPL, aplica o parche Crealib para eliminar o selo
+de auga presente na edición gratuíta.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        de) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Autor: Charlie Martínez
+--------------------------------------------------------------------------------
+Dieses Skript lädt automatisch die neueste kostenlose Version von
+Seraphinite Accelerator herunter und nutzt die durch die GPL-Lizenz
+gewährten Freiheiten, um den Crealib-Patch anzuwenden, der das
+Wasserzeichen der kostenlosen Version entfernt.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        pt) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Autor: Charlie Martínez
+--------------------------------------------------------------------------------
+Este script baixa automaticamente a versão gratuita mais recente do
+Seraphinite Accelerator e, utilizando as liberdades concedidas pela
+licença GPL, aplica o patch Crealib para remover a marca d'água
+presente na edição gratuita.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        it) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Autore: Charlie Martínez
+--------------------------------------------------------------------------------
+Questo script scarica automaticamente l'ultima versione gratuita di
+Seraphinite Accelerator e, esercitando le libertà garantite dalla
+licenza GPL, applica la patch Crealib per rimuovere la filigrana
+presente nell'edizione gratuita.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        fr) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Auteur : Charlie Martínez
+--------------------------------------------------------------------------------
+Ce script télécharge automatiquement la dernière version gratuite de
+Seraphinite Accelerator et, en exerçant les libertés accordées par
+la licence GPL, applique le correctif Crealib afin de supprimer le
+filigrane présent dans l'édition gratuite.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        ru) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Автор: Чарли Мартинес
+--------------------------------------------------------------------------------
+Этот скрипт автоматически загружает последнюю бесплатную версию
+Seraphinite Accelerator и, используя свободы, предоставляемые
+лицензией GPL, применяет патч Crealib для удаления водяного знака,
+присутствующего в бесплатной версии.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        hu) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Szerző: Charlie Martínez
+--------------------------------------------------------------------------------
+Ez a szkript automatikusan letölti a Seraphinite Accelerator legfrissebb
+ingyenes verzióját, és a GPL licenc által biztosított szabadságokkal
+élve alkalmazza a Crealib javítást, amely eltávolítja az ingyenes
+verzióban található vízjelet.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+        *) cat <<'EOF'
+--------------------------------------------------------------------------------
+CREALIB-ACCELERATOR
+Author: Charlie Martínez
+--------------------------------------------------------------------------------
+This script automatically downloads the latest free version of
+Seraphinite Accelerator and, exercising the freedoms granted by
+its GPL license, applies the Crealib patch to remove the footer
+watermark present in the free edition.
+--------------------------------------------------------------------------------
+EOF
+        ;;
+    esac
+}
+
+_banner
+sleep 3
+
+# Información del progreso
+
+_msg() {
+    local key="$1"
+    case "$LANG_CODE" in
+        es) case "$key" in
+            start) echo "Iniciando modificación de Seraphinite Accelerator..." ;;
+            download) echo "Descargando la última versión de Accelerator..." ;;
+            unzip) echo "Descomprimiendo Accelerator.zip..." ;;
+            no_dir) echo "Error: no se encontró la carpeta esperada tras descomprimir." ;;
+            mod_content) echo "Modificando content.php..." ;;
+            mod_plugin) echo "Modificando plugin_root.php..." ;;
+            rename) echo "Renombrando carpeta a crealib-accelerator..." ;;
+            zip) echo "Creando crealib-accelerator.zip..." ;;
+            cleanup) echo "Eliminando carpeta temporal crealib-accelerator..." ;;
+            download_error) echo "Error: la descarga falló o el archivo ZIP no es válido." ;;
+            done) echo "Proceso completado correctamente." ;;
+        esac ;;
+        gl) case "$key" in
+            start) echo "Iniciando a modificación de Seraphinite Accelerator..." ;;
+            download) echo "Descargando a última versión de Accelerator..." ;;
+            unzip) echo "Descomprimindo Accelerator.zip..." ;;
+            no_dir) echo "Erro: non se atopou o directorio esperado." ;;
+            mod_content) echo "Modificando content.php..." ;;
+            mod_plugin) echo "Modificando plugin_root.php..." ;;
+            rename) echo "Renomeando o cartafol a crealib-accelerator..." ;;
+            zip) echo "Creando crealib-accelerator.zip..." ;;
+            cleanup) echo "Eliminando o cartafol temporal crealib-accelerator..." ;;
+            download_error) echo "Erro: a descarga fallou ou o ficheiro ZIP non é válido." ;;
+            done) echo "Proceso completado correctamente." ;;
+        esac ;;
+        de) case "$key" in
+            start) echo "Starte Änderung von Seraphinite Accelerator..." ;;
+            download) echo "Lade neueste Accelerator-Version herunter..." ;;
+            unzip) echo "Entpacke Accelerator.zip..." ;;
+            no_dir) echo "Fehler: Erwartetes Verzeichnis nicht gefunden." ;;
+            mod_content) echo "Bearbeite content.php..." ;;
+            mod_plugin) echo "Bearbeite plugin_root.php..." ;;
+            rename) echo "Benenne Ordner in crealib-accelerator um..." ;;
+            zip) echo "Erstelle crealib-accelerator.zip..." ;;
+            cleanup) echo "Entferne temporären Ordner crealib-accelerator..." ;;
+            download_error) echo "Fehler: Download fehlgeschlagen oder ZIP-Datei ungültig." ;;
+            done) echo "Vorgang erfolgreich abgeschlossen." ;;
+        esac ;;
+        pt) case "$key" in
+            start) echo "Iniciando modificação do Seraphinite Accelerator..." ;;
+            download) echo "Baixando a versão mais recente do Accelerator..." ;;
+            unzip) echo "Extraindo Accelerator.zip..." ;;
+            no_dir) echo "Erro: diretório esperado não encontrado." ;;
+            mod_content) echo "Modificando content.php..." ;;
+            mod_plugin) echo "Modificando plugin_root.php..." ;;
+            rename) echo "Renomeando pasta para crealib-accelerator..." ;;
+            zip) echo "Criando crealib-accelerator.zip..." ;;
+            cleanup) echo "Removendo pasta temporária crealib-accelerator..." ;;
+            download_error) echo "Erro: o download falhou ou o arquivo ZIP é inválido." ;;
+            done) echo "Processo concluído com sucesso." ;;
+        esac ;;
+        it) case "$key" in
+            start) echo "Avvio modifica di Seraphinite Accelerator..." ;;
+            download) echo "Scaricamento ultima versione di Accelerator..." ;;
+            unzip) echo "Estrazione Accelerator.zip..." ;;
+            no_dir) echo "Errore: directory prevista non trovata." ;;
+            mod_content) echo "Modifica content.php..." ;;
+            mod_plugin) echo "Modifica plugin_root.php..." ;;
+            rename) echo "Rinomina cartella in crealib-accelerator..." ;;
+            zip) echo "Creazione crealib-accelerator.zip..." ;;
+            cleanup) echo "Eliminazione cartella temporanea..." ;;
+            download_error) echo "Errore: download non riuscito o file ZIP non valido." ;;
+            done) echo "Operazione completata con successo." ;;
+        esac ;;
+        fr) case "$key" in
+            start) echo "Démarrage de la modification de Seraphinite Accelerator..." ;;
+            download) echo "Téléchargement de la dernière version..." ;;
+            unzip) echo "Extraction de Accelerator.zip..." ;;
+            no_dir) echo "Erreur : répertoire attendu introuvable." ;;
+            mod_content) echo "Modification de content.php..." ;;
+            mod_plugin) echo "Modification de plugin_root.php..." ;;
+            rename) echo "Renommage du dossier en crealib-accelerator..." ;;
+            zip) echo "Création de crealib-accelerator.zip..." ;;
+            cleanup) echo "Suppression du dossier temporaire..." ;;
+            download_error) echo "Erreur : le téléchargement a échoué ou le fichier ZIP est invalide." ;;
+            done) echo "Processus terminé avec succès." ;;
+        esac ;;
+        ru) case "$key" in
+            start) echo "Начало модификации Seraphinite Accelerator..." ;;
+            download) echo "Загрузка последней версии Accelerator..." ;;
+            unzip) echo "Распаковка Accelerator.zip..." ;;
+            no_dir) echo "Ошибка: ожидаемая папка не найдена." ;;
+            mod_content) echo "Изменение content.php..." ;;
+            mod_plugin) echo "Изменение plugin_root.php..." ;;
+            rename) echo "Переименование папки в crealib-accelerator..." ;;
+            zip) echo "Создание crealib-accelerator.zip..." ;;
+            cleanup) echo "Удаление временной папки..." ;;
+            download_error) echo "Ошибка: загрузка не удалась или ZIP-файл повреждён." ;;
+            done) echo "Процесс успешно завершён." ;;
+        esac ;;
+        hu) case "$key" in
+            start) echo "Seraphinite Accelerator módosítás indítása..." ;;
+            download) echo "Legfrissebb Accelerator letöltése..." ;;
+            unzip) echo "Accelerator.zip kibontása..." ;;
+            no_dir) echo "Hiba: várt könyvtár nem található." ;;
+            mod_content) echo "content.php módosítása..." ;;
+            mod_plugin) echo "plugin_root.php módosítása..." ;;
+            rename) echo "Mappa átnevezése crealib-accelerator-ra..." ;;
+            zip) echo "crealib-accelerator.zip létrehozása..." ;;
+            cleanup) echo "Ideiglenes mappa törlése..." ;;
+            download_error) echo "Hiba: a letöltés sikertelen vagy a ZIP fájl érvénytelen." ;;
+            done) echo "Folyamat sikeresen befejezve." ;;
+        esac ;;
+        *) case "$key" in
+            start) echo "Starting Seraphinite Accelerator modification..." ;;
+            download) echo "Downloading latest Accelerator version..." ;;
+            unzip) echo "Unzipping Accelerator.zip..." ;;
+            no_dir) echo "Error: expected directory not found." ;;
+            mod_content) echo "Modifying content.php..." ;;
+            mod_plugin) echo "Modifying plugin_root.php..." ;;
+            rename) echo "Renaming folder to crealib-accelerator..." ;;
+            zip) echo "Creating crealib-accelerator.zip..." ;;
+            cleanup) echo "Removing temporary crealib-accelerator folder..." ;;
+            download_error) echo "Error: download failed or the ZIP file is invalid." ;;
+            done) echo "Process completed successfully." ;;
+        esac ;;
+    esac
+}
+
+# --------------------------------------------------------------------
+# Proceso principal
+# --------------------------------------------------------------------
+
+_msg start
+_msg download
+wget -q -O "$ZIP_NAME" "$DOWNLOAD_URL"
+
+_msg unzip
+
+rm -rf "$SRC_DIR"
+
+if ! unzip -t "$ZIP_NAME" >/dev/null 2>&1; then
+    _msg download_error
+    exit 1
+fi
+
+unzip -q "$ZIP_NAME"
+
+[ -d "$SRC_DIR" ] || { _msg no_dir; exit 1; }
+
+# --------------------------------------------------------------------
+# Parche content.php
+# Neutraliza la condición que inyecta el banner publicitario en el
+# footer. La función cambió de HtmlNd::Parse a HtmlNd::ParseAndImport
+# en versiones recientes, por lo que se actúa sobre el if exterior.
+# --------------------------------------------------------------------
+
+_msg mod_content
+CONTENT_FILE="$SRC_DIR/content.php"
+awk '
+/if\( \( \$ctxProcess\[ .mode. \] & 1 \) && \$seraph_accel_g_ahuddqrText \)/ {
+    print "\tif( false ) /* Crealib: footer credits disabled */"
+    next
+}
+{ print }
+' "$CONTENT_FILE" > "$CONTENT_FILE.tmp" && mv "$CONTENT_FILE.tmp" "$CONTENT_FILE"
+
+_msg mod_plugin
+PLUGIN_FILE="$SRC_DIR/plugin_root.php"
+awk '
+BEGIN { h=1 }
+/Plugin Name:/ { print "Plugin Name: Crealib Accelerator"; next }
+/Plugin URI:/ { print "Plugin URI: https://www.crealib.net/plugin-accelerator"; next }
+/Author: Seraphinite/ { print "Author: Crealib Tecnología Sostenible"; next }
+/Author URI:/ { print "Author URI: https://www.crealib.net"; next }
+/^\*\// { print; h=0; next }
+{ print }
+' "$PLUGIN_FILE" > "$PLUGIN_FILE.tmp" && mv "$PLUGIN_FILE.tmp" "$PLUGIN_FILE"
+
+_msg rename
+rm -rf "$DST_DIR"
+mv "$SRC_DIR" "$DST_DIR"
+
+_msg zip
+rm -f "$OUT_ZIP"
+zip -qr "$OUT_ZIP" "$DST_DIR"
+
+_msg cleanup
+rm -rf "$DST_DIR"
+rm -rf Accelerator.zip
+
+_msg done
