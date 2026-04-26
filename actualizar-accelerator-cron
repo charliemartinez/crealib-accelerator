@@ -1,0 +1,296 @@
+#!/bin/bash
+
+# ======================================================================
+# Archivo:       actualizar-accelerator-cron
+# Ruta:          /usr/local/bin/actualizar-accelerator-cron
+# Autor:         Charlie Martinez <cmartinez@quirinux.org>
+# Licencia:      https://www.gnu.org/licenses/gpl-2.0.txt
+# Proposito:     Actualizacion automatica de crealib-accelerator
+#                en todos los WordPress del servidor
+# ======================================================================
+
+# --------------------------------------------------------------------
+# INSTALACION Y CONFIGURACION
+# --------------------------------------------------------------------
+#
+# 1) Copiar este script al sistema y hacerlo ejecutable:
+#
+#       cp actualizar-accelerator-cron /usr/local/bin/
+#       chmod +x /usr/local/bin/actualizar-accelerator-cron
+#
+# 2) Editar las variables de la seccion CONFIGURACION mas abajo,
+#    especialmente EMAIL_DESTINO.
+#
+# --------------------------------------------------------------------
+# CRON SEMANAL
+# --------------------------------------------------------------------
+#
+# Para ejecutar automaticamente cada lunes a las 3:00 AM:
+#
+#       crontab -e
+#
+# Añadir la siguiente linea:
+#
+#       0 3 * * 1 /usr/local/bin/actualizar-accelerator-cron
+#
+# --------------------------------------------------------------------
+# DEPENDENCIAS PARA ENVIO DE CORREO
+# --------------------------------------------------------------------
+#
+# Este script usa msmtp como cliente SMTP. Para instalarlo:
+#
+#       apt-get install msmtp msmtp-mta mailutils -y
+#
+# Luego crear el archivo de configuracion /etc/msmtprc con el
+# siguiente contenido (ajusta los valores a tu servidor SMTP):
+#
+#       defaults
+#       auth           on
+#       tls            on
+#       tls_starttls   off
+#       logfile        /var/log/msmtp.log
+#
+#       account        miservidor
+#       host           smtp.midominio.com
+#       port           465
+#       from           envios@midominio.com
+#       user           envios@midominio.com
+#       password       mi_contrasena
+#
+#       account default : miservidor
+#
+# Asegurar permisos correctos:
+#
+#       chmod 600 /etc/msmtprc
+#
+# Probar el envio:
+#
+#       echo "Prueba" | msmtp destinatario@ejemplo.com
+#
+# Nota: el puerto 465 usa SSL/TLS directo (tls_starttls off).
+# Si tu servidor usa STARTTLS en puerto 587, cambia:
+#       port           587
+#       tls_starttls   on
+#
+# ======================================================================
+
+# --------------------------------------------------------------------
+# CONFIGURACION -- ajusta estos valores
+# --------------------------------------------------------------------
+
+EMAIL_DESTINO="tu@correo.com" # Pon aquí tu dirección de correo
+EMAIL_ASUNTO="[Crealib Accelerator] Informe de actualizacion"
+PLUGIN_SLUG="crealib-accelerator"
+DOWNLOAD_URL="https://www.s-sols.com/data/products/wordpress/accelerator/Accelerator.zip"
+ZIP_UPSTREAM="/tmp/Accelerator-upstream.zip"
+ZIP_DESTINO="/tmp/crealib-accelerator.zip"
+WORKDIR="/tmp/crealib-accelerator-work"
+LOG=""
+
+# --------------------------------------------------------------------
+# Deteccion automatica de sitios WordPress
+# --------------------------------------------------------------------
+
+SITIOS=()
+while IFS= read -r -d '' wp_config; do
+    SITIOS+=("$(dirname "$wp_config")")
+done < <(find /var/www -maxdepth 4 -name "wp-config.php" -print0 2>/dev/null)
+
+# --------------------------------------------------------------------
+# Funciones auxiliares
+# --------------------------------------------------------------------
+
+_log() {
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    echo "$msg"
+    LOG="${LOG}
+${msg}"
+}
+
+_php_para_sitio() {
+    local sitio="$1"
+    local dominio
+    dominio=$(basename "$(dirname "$sitio")")
+    local version
+
+    version=$(grep -rh "php.*fpm\|fastcgi_pass.*php\|php[0-9]\.[0-9]" \
+        /etc/nginx/sites-enabled/ /etc/apache2/sites-enabled/ 2>/dev/null \
+        | grep -i "$dominio" \
+        | grep -oP 'php\K[0-9]+\.[0-9]+' \
+        | head -1)
+
+    if [ -n "$version" ] && command -v "php${version}" &>/dev/null; then
+        echo "php${version} -d error_reporting=0"
+        return
+    fi
+
+    version=$(find /etc/php -name "*.conf" 2>/dev/null \
+        | xargs grep -l "$dominio" 2>/dev/null \
+        | grep -oP '/etc/php/\K[0-9]+\.[0-9]+' \
+        | head -1)
+
+    if [ -n "$version" ] && command -v "php${version}" &>/dev/null; then
+        echo "php${version} -d error_reporting=0"
+        return
+    fi
+
+    echo "php8.2 -d error_reporting=0"
+}
+
+_version_instalada() {
+    local sitio="$1"
+    local php_cmd="$2"
+    local resultado
+    resultado=$($php_cmd /usr/local/bin/wp-cli.phar plugin get "$PLUGIN_SLUG" \
+        --field=version --path="$sitio" --allow-root 2>/dev/null) || true
+    echo "${resultado:-no-instalado}"
+}
+
+_version_upstream() {
+    # Descarga el zip original y lee la version del plugin_root.php
+    wget -qO "$ZIP_UPSTREAM" "$DOWNLOAD_URL" || true
+    if [ ! -s "$ZIP_UPSTREAM" ]; then
+        echo ""
+        return
+    fi
+    unzip -p "$ZIP_UPSTREAM" "seraphinite-accelerator-ext/plugin_root.php" \
+        | grep -oP "Version:\s*\K[\d.]+" | head -1
+}
+
+_version_mayor() {
+    # Devuelve true si $1 > $2 usando sort -V
+    [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ] && [ "$1" != "$2" ]
+}
+
+_generar_zip() {
+    # El zip upstream ya fue descargado por _version_upstream, lo reutiliza
+    _log "Generando zip parcheado con actualizar-accelerator..."
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+    cp "$ZIP_UPSTREAM" "$WORKDIR/Accelerator.zip"
+    cd "$WORKDIR"
+
+    # Descomprimir y aplicar parche (replica lo que hace actualizar-accelerator)
+    unzip -q Accelerator.zip
+    SRC_DIR="seraphinite-accelerator-ext"
+    DST_DIR="crealib-accelerator"
+
+    if [ ! -d "$SRC_DIR" ]; then
+        _log "ERROR: no se encontro la carpeta $SRC_DIR tras descomprimir."
+        return 1
+    fi
+
+    # Parche content.php
+    awk '
+    /if\( \( \$ctxProcess\[ .mode. \] & 1 \) && \$seraph_accel_g_ahuddqrText \)/ {
+        print "\tif( false ) /* Crealib: footer credits disabled */"
+        next
+    }
+    { print }
+    ' "$SRC_DIR/content.php" > "$SRC_DIR/content.php.tmp" && mv "$SRC_DIR/content.php.tmp" "$SRC_DIR/content.php"
+
+    # Parche plugin_root.php
+    awk '
+    /Plugin Name:/ { print "Plugin Name: Crealib Accelerator"; next }
+    /Plugin URI:/ { print "Plugin URI: https://www.crealib.net/plugin-accelerator"; next }
+    /Author: Seraphinite/ { print "Author: Crealib Tecnologia Sostenible"; next }
+    /Author URI:/ { print "Author URI: https://www.crealib.net"; next }
+    { print }
+    ' "$SRC_DIR/plugin_root.php" > "$SRC_DIR/plugin_root.php.tmp" && mv "$SRC_DIR/plugin_root.php.tmp" "$SRC_DIR/plugin_root.php"
+
+    mv "$SRC_DIR" "$DST_DIR"
+    zip -qr "$ZIP_DESTINO" "$DST_DIR"
+
+    if [ ! -f "$ZIP_DESTINO" ]; then
+        _log "ERROR: no se genero el zip final."
+        return 1
+    fi
+
+    _log "Zip generado correctamente en $ZIP_DESTINO"
+    return 0
+}
+
+# --------------------------------------------------------------------
+# Proceso principal
+# --------------------------------------------------------------------
+
+_log "========== INICIO DE ACTUALIZACION CREALIB ACCELERATOR =========="
+_log "Sitios detectados: ${#SITIOS[@]}"
+
+# Obtener version upstream descargando el zip original
+_log "Descargando zip upstream para verificar version..."
+VERSION_UPSTREAM=$(_version_upstream)
+
+if [ -z "$VERSION_UPSTREAM" ]; then
+    _log "ERROR: no se pudo obtener la version upstream. Abortando."
+    echo "$LOG" | msmtp "$EMAIL_DESTINO"
+    exit 1
+fi
+
+_log "Version mas reciente de Seraphinite: $VERSION_UPSTREAM"
+
+HUBO_CAMBIOS=false
+ZIP_GENERADO=false
+
+for SITIO in "${SITIOS[@]}"; do
+
+    _log "--- Procesando: $SITIO"
+
+    PHP_CMD=$(_php_para_sitio "$SITIO")
+    _log "PHP detectado: $PHP_CMD"
+
+    VERSION_ACTUAL=$(_version_instalada "$SITIO" "$PHP_CMD")
+
+    if [ "$VERSION_ACTUAL" = "no-instalado" ]; then
+        _log "El plugin no esta instalado en este sitio. Saltando."
+        continue
+    fi
+
+    _log "Version instalada: $VERSION_ACTUAL"
+
+    if ! _version_mayor "$VERSION_UPSTREAM" "$VERSION_ACTUAL"; then
+        _log "El sitio ya esta al dia. Sin cambios."
+        continue
+    fi
+
+    _log "Actualizacion disponible: $VERSION_ACTUAL -> $VERSION_UPSTREAM"
+    HUBO_CAMBIOS=true
+
+    # Generar zip parcheado solo una vez para todos los sitios
+    if [ "$ZIP_GENERADO" = false ]; then
+        if ! _generar_zip; then
+            _log "ERROR CRITICO: No se pudo generar el zip. Abortando."
+            break
+        fi
+        ZIP_GENERADO=true
+    fi
+
+    _log "Instalando crealib-accelerator en $SITIO..."
+    if $PHP_CMD /usr/local/bin/wp-cli.phar plugin install "$ZIP_DESTINO" \
+        --force --path="$SITIO" --allow-root > /dev/null 2>&1; then
+        _log "OK Plugin actualizado en $SITIO (v$VERSION_UPSTREAM)"
+    else
+        _log "ERROR al instalar el plugin en $SITIO"
+        HUBO_CAMBIOS=true
+    fi
+
+done
+
+# --------------------------------------------------------------------
+# Limpieza
+# --------------------------------------------------------------------
+
+rm -f "$ZIP_DESTINO" "$ZIP_UPSTREAM"
+rm -rf "$WORKDIR"
+
+_log "========== FIN DE ACTUALIZACION =========="
+
+# --------------------------------------------------------------------
+# Envio de email solo si hubo cambios o errores
+# --------------------------------------------------------------------
+
+if [ "$HUBO_CAMBIOS" = true ]; then
+    printf "Subject: %s\nFrom: envios@crealib.net\nTo: %s\n\n%s" \
+        "$EMAIL_ASUNTO" "$EMAIL_DESTINO" "$LOG" | msmtp "$EMAIL_DESTINO"
+    echo "Informe enviado a $EMAIL_DESTINO"
+fi
