@@ -78,7 +78,7 @@
 # CONFIGURACION -- ajusta estos valores
 # --------------------------------------------------------------------
 
-EMAIL_DESTINO="tu@correo.com" # Pon aquí tu dirección de correo
+EMAIL_DESTINO="envios@midominio.com" # Pon la dirección de envío
 EMAIL_ASUNTO="[Crealib Accelerator] Informe de actualizacion"
 PLUGIN_SLUG="crealib-accelerator"
 DOWNLOAD_URL="https://www.s-sols.com/data/products/wordpress/accelerator/Accelerator.zip"
