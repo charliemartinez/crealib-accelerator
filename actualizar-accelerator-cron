@@ -269,6 +269,7 @@ _php_para_sitio() {
     dominio=$(basename "$(dirname "$sitio")")
     local version
 
+    # 1) FPM: buscar version en configuracion de nginx y apache asociada al dominio
     version=$(grep -rh "php.*fpm\|fastcgi_pass.*php\|php[0-9]\.[0-9]" \
         /etc/nginx/sites-enabled/ /etc/apache2/sites-enabled/ 2>/dev/null \
         | grep -i "$dominio" \
@@ -280,6 +281,7 @@ _php_para_sitio() {
         return
     fi
 
+    # 2) FPM: buscar en archivos .conf de php asociados al dominio
     version=$(find /etc/php -name "*.conf" 2>/dev/null \
         | xargs grep -l "$dominio" 2>/dev/null \
         | grep -oP '/etc/php/\K[0-9]+\.[0-9]+' \
@@ -290,6 +292,25 @@ _php_para_sitio() {
         return
     fi
 
+    # 3) mod_php: buscar modulo phpX.Y activo en apache
+    version=$(find /etc/apache2/mods-enabled/ -name "php*.load" 2>/dev/null \
+        | grep -oP 'php\K[0-9]+\.[0-9]+' \
+        | head -1)
+
+    if [ -n "$version" ] && command -v "php${version}" &>/dev/null; then
+        echo "php${version} -d error_reporting=0"
+        return
+    fi
+
+    # 4) Cualquier binario php disponible en el PATH del sistema
+    local php_bin
+    php_bin=$(command -v php 2>/dev/null)
+    if [ -n "$php_bin" ]; then
+        echo "$php_bin -d error_reporting=0"
+        return
+    fi
+
+    # 5) Fallback a php8.2
     echo "php8.2 -d error_reporting=0"
 }
 
