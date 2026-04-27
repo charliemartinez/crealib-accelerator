@@ -302,15 +302,19 @@ _php_para_sitio() {
         return
     fi
 
-    # 4) Cualquier binario php disponible en el PATH del sistema
+    # 4) Buscar cualquier binario phpX.Y versionado disponible en el sistema,
+    #    en orden descendente de version, ignorando el binario generico "php"
+    #    que puede apuntar a una instalacion rota.
     local php_bin
-    php_bin=$(command -v php 2>/dev/null)
-    if [ -n "$php_bin" ]; then
+    php_bin=$(find /usr/bin /usr/local/bin -maxdepth 1 -name 'php[0-9]*.[0-9]*' 2>/dev/null \
+        | sort -Vr | head -1)
+
+    if [ -n "$php_bin" ] && "$php_bin" -r 'exit(0);' &>/dev/null; then
         echo "$php_bin -d error_reporting=0"
         return
     fi
 
-    # 5) Fallback a php8.2
+    # 5) Ultimo recurso
     echo "php8.2 -d error_reporting=0"
 }
 
