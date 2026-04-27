@@ -122,10 +122,10 @@ _configurar_msmtp() {
 
     local msmtprc="/etc/msmtprc"
 
-    # Si no hay ninguna variable SMTP definida, no tocar nada
-    if [ -z "$SMTP_HOST" ] && [ -z "$SMTP_PORT" ] && [ -z "$SMTP_FROM" ]  && \
-       [ -z "$SMTP_USER" ] && [ -z "$SMTP_PASS" ] && [ -z "$SMTP_ACCOUNT" ] && \
-       [ -z "$SMTP_STARTTLS" ] && [ -z "$SMTP_LOGFILE" ]; then
+    # Si no hay ninguna variable SMTP significativa definida, no tocar nada.
+    # SMTP_LOGFILE y SMTP_STARTTLS tienen valores por defecto y no cuentan solos.
+    if [ -z "$SMTP_HOST" ] && [ -z "$SMTP_PORT" ] && [ -z "$SMTP_FROM" ] && \
+       [ -z "$SMTP_USER" ] && [ -z "$SMTP_PASS" ] && [ -z "$SMTP_ACCOUNT" ]; then
         return 0
     fi
 
