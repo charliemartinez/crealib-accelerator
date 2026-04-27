@@ -19,7 +19,7 @@
 #       chmod +x /usr/local/bin/actualizar-accelerator-cron
 #
 # 2) Editar las variables de la seccion CONFIGURACION mas abajo,
-#    especialmente EMAIL_DESTINO.
+#    especialmente EMAIL_DESTINO y las variables del bloque SMTP.
 #
 # --------------------------------------------------------------------
 # CRON SEMANAL
@@ -41,13 +41,21 @@
 #
 #       apt-get install msmtp msmtp-mta mailutils -y
 #
-# Luego crear el archivo de configuracion /etc/msmtprc con el
-# siguiente contenido (ajusta los valores a tu servidor SMTP):
+# El script puede gestionar automaticamente el archivo de configuracion
+# /etc/msmtprc a partir de las variables SMTP_* definidas en la seccion
+# CONFIGURACION de mas abajo.
+#
+# Si /etc/msmtprc no existe o sus valores difieren de los indicados en
+# las variables, el script lo (re)creara antes de intentar el envio.
+#
+# Si prefieres gestionar /etc/msmtprc de forma manual, deja las
+# variables SMTP_* vacias: el script usara el archivo existente sin
+# modificarlo. En ese caso, el contenido esperado del archivo es:
 #
 #       defaults
 #       auth           on
 #       tls            on
-#       tls_starttls   off
+#       tls_starttls   off       # off = SSL/TLS directo (puerto 465)
 #       logfile        /var/log/msmtp.log
 #
 #       account        miservidor
@@ -59,18 +67,17 @@
 #
 #       account default : miservidor
 #
-# Asegurar permisos correctos:
+# Asegurar permisos correctos tras editar a mano:
 #
 #       chmod 600 /etc/msmtprc
 #
-# Probar el envio:
+# Nota sobre puertos y cifrado:
+#   - Puerto 465 + SSL/TLS directo  -> tls_starttls off  (recomendado)
+#   - Puerto 587 + STARTTLS         -> tls_starttls on
+#
+# Para probar el envio manualmente:
 #
 #       echo "Prueba" | msmtp destinatario@ejemplo.com
-#
-# Nota: el puerto 465 usa SSL/TLS directo (tls_starttls off).
-# Si tu servidor usa STARTTLS en puerto 587, cambia:
-#       port           587
-#       tls_starttls   on
 #
 # ======================================================================
 
@@ -78,7 +85,7 @@
 # CONFIGURACION -- ajusta estos valores
 # --------------------------------------------------------------------
 
-EMAIL_DESTINO="envios@midominio.com" # Pon la dirección de envío
+EMAIL_DESTINO="envios@midominio.com"   # Direccion destinataria del informe
 EMAIL_ASUNTO="[Crealib Accelerator] Informe de actualizacion"
 PLUGIN_SLUG="crealib-accelerator"
 DOWNLOAD_URL="https://www.s-sols.com/data/products/wordpress/accelerator/Accelerator.zip"
@@ -86,6 +93,118 @@ ZIP_UPSTREAM="/tmp/Accelerator-upstream.zip"
 ZIP_DESTINO="/tmp/crealib-accelerator.zip"
 WORKDIR="/tmp/crealib-accelerator-work"
 LOG=""
+
+# --------------------------------------------------------------------
+# CONFIGURACION SMTP -- deja en blanco para usar /etc/msmtprc existente
+# --------------------------------------------------------------------
+#
+# Si estas variables tienen valor, el script comparara su contenido con
+# /etc/msmtprc y lo actualizara automaticamente si hay diferencias.
+# Si las dejas vacias, el archivo de configuracion no se tocara.
+
+SMTP_HOST="smtp.midominio.com"          # Servidor SMTP
+SMTP_PORT="465"                         # 465 (SSL) o 587 (STARTTLS)
+SMTP_FROM="envios@midominio.com"        # Direccion remitente
+SMTP_USER="envios@midominio.com"        # Usuario SMTP
+SMTP_PASS="mi_contrasena"              # Contrasena SMTP
+SMTP_STARTTLS="off"                     # "off" para SSL/TLS directo (465)
+                                        # "on"  para STARTTLS (587)
+SMTP_ACCOUNT="miservidor"              # Nombre interno de la cuenta msmtp
+SMTP_LOGFILE="/var/log/msmtp.log"      # Ruta del log de msmtp
+
+# ======================================================================
+
+# --------------------------------------------------------------------
+# Gestion automatica de /etc/msmtprc
+# --------------------------------------------------------------------
+
+_configurar_msmtp() {
+
+    # Si las variables SMTP estan vacias, no hacer nada
+    if [ -z "$SMTP_HOST" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
+        return 0
+    fi
+
+    local msmtprc="/etc/msmtprc"
+
+    # Contenido esperado segun las variables actuales
+    local contenido_esperado
+    contenido_esperado=$(cat <<EOF
+defaults
+auth           on
+tls            on
+tls_starttls   ${SMTP_STARTTLS}
+logfile        ${SMTP_LOGFILE}
+
+account        ${SMTP_ACCOUNT}
+host           ${SMTP_HOST}
+port           ${SMTP_PORT}
+from           ${SMTP_FROM}
+user           ${SMTP_USER}
+password       ${SMTP_PASS}
+
+account default : ${SMTP_ACCOUNT}
+EOF
+)
+
+    # Comparar con el contenido actual (si el archivo existe)
+    if [ -f "$msmtprc" ]; then
+        local contenido_actual
+        contenido_actual=$(cat "$msmtprc")
+        if [ "$contenido_actual" = "$contenido_esperado" ]; then
+            # Configuracion ya actualizada, nada que hacer
+            return 0
+        fi
+        _log "Configuracion SMTP ha cambiado. Actualizando $msmtprc..."
+    else
+        _log "$msmtprc no existe. Creando configuracion SMTP..."
+    fi
+
+    printf '%s\n' "$contenido_esperado" > "$msmtprc"
+    chmod 600 "$msmtprc"
+    _log "Archivo $msmtprc escrito y permisos establecidos (600)."
+}
+
+# --------------------------------------------------------------------
+# Envio de email con control de errores
+# --------------------------------------------------------------------
+
+_enviar_email() {
+    local asunto="$1"
+    local destino="$2"
+    local cuerpo="$3"
+
+    # Comprobar que msmtp esta instalado
+    if ! command -v msmtp &>/dev/null; then
+        _log "AVISO: msmtp no esta instalado. No se enviara el informe por correo."
+        _log "       Instalar con: apt-get install msmtp msmtp-mta mailutils -y"
+        return 1
+    fi
+
+    # Intentar configurar/actualizar msmtprc si corresponde
+    _configurar_msmtp
+
+    # Comprobar que /etc/msmtprc existe y tiene contenido
+    if [ ! -s /etc/msmtprc ]; then
+        _log "AVISO: /etc/msmtprc no existe o esta vacio. No se enviara el informe."
+        _log "       Revisa las variables SMTP_* en este script o crea /etc/msmtprc manualmente."
+        return 1
+    fi
+
+    # Intentar el envio y capturar errores
+    local error_output
+    if error_output=$(printf "Subject: %s\nFrom: %s\nTo: %s\n\n%s" \
+        "$asunto" "$SMTP_FROM" "$destino" "$cuerpo" \
+        | msmtp "$destino" 2>&1); then
+        _log "Informe enviado correctamente a $destino."
+        return 0
+    else
+        _log "AVISO: Error al enviar el correo a $destino."
+        _log "       Detalle: $error_output"
+        _log "       El proceso de actualizacion finalizo con exito; solo fallo el envio."
+        return 1
+    fi
+}
 
 # --------------------------------------------------------------------
 # Deteccion automatica de sitios WordPress
@@ -223,7 +342,7 @@ VERSION_UPSTREAM=$(_version_upstream)
 
 if [ -z "$VERSION_UPSTREAM" ]; then
     _log "ERROR: no se pudo obtener la version upstream. Abortando."
-    echo "$LOG" | msmtp "$EMAIL_DESTINO"
+    _enviar_email "$EMAIL_ASUNTO" "$EMAIL_DESTINO" "$LOG"
     exit 1
 fi
 
@@ -290,7 +409,5 @@ _log "========== FIN DE ACTUALIZACION =========="
 # --------------------------------------------------------------------
 
 if [ "$HUBO_CAMBIOS" = true ]; then
-    printf "Subject: %s\nFrom: envios@crealib.net\nTo: %s\n\n%s" \
-        "$EMAIL_ASUNTO" "$EMAIL_DESTINO" "$LOG" | msmtp "$EMAIL_DESTINO"
-    echo "Informe enviado a $EMAIL_DESTINO"
+    _enviar_email "$EMAIL_ASUNTO" "$EMAIL_DESTINO" "$LOG"
 fi
