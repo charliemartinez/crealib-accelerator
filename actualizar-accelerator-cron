@@ -85,7 +85,7 @@
 # CONFIGURACION -- ajusta estos valores
 # --------------------------------------------------------------------
 
-EMAIL_DESTINO="envios@midominio.com"   # Direccion destinataria del informe
+EMAIL_DESTINO=""                       # Direccion destinataria del informe
 EMAIL_ASUNTO="[Crealib Accelerator] Informe de actualizacion"
 PLUGIN_SLUG="crealib-accelerator"
 DOWNLOAD_URL="https://www.s-sols.com/data/products/wordpress/accelerator/Accelerator.zip"
@@ -102,15 +102,15 @@ LOG=""
 # /etc/msmtprc y lo actualizara automaticamente si hay diferencias.
 # Si las dejas vacias, el archivo de configuracion no se tocara.
 
-SMTP_HOST="smtp.midominio.com"          # Servidor SMTP
-SMTP_PORT="465"                         # 465 (SSL) o 587 (STARTTLS)
-SMTP_FROM="envios@midominio.com"        # Direccion remitente
-SMTP_USER="envios@midominio.com"        # Usuario SMTP
-SMTP_PASS="mi_contrasena"              # Contrasena SMTP
-SMTP_STARTTLS="off"                     # "off" para SSL/TLS directo (465)
+SMTP_HOST=""                            # Servidor SMTP
+SMTP_PORT=""                            # 465 (SSL) o 587 (STARTTLS)
+SMTP_FROM=""                            # Direccion remitente
+SMTP_USER=""                            # Usuario SMTP
+SMTP_PASS=""                            # Contrasena SMTP
+SMTP_STARTTLS=""                        # "off" para SSL/TLS directo (465)
                                         # "on"  para STARTTLS (587)
-SMTP_ACCOUNT="miservidor"              # Nombre interno de la cuenta msmtp
-SMTP_LOGFILE="/var/log/msmtp.log"      # Ruta del log de msmtp
+SMTP_ACCOUNT=""                         # Nombre interno de la cuenta msmtp
+SMTP_LOGFILE="/var/log/msmtp.log"       # Ruta del log de msmtp
 
 # ======================================================================
 
@@ -120,21 +120,30 @@ SMTP_LOGFILE="/var/log/msmtp.log"      # Ruta del log de msmtp
 
 _configurar_msmtp() {
 
-    # Si las variables SMTP estan vacias, no hacer nada
-    if [ -z "$SMTP_HOST" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ]; then
+    local msmtprc="/etc/msmtprc"
+
+    # Si no hay ninguna variable SMTP definida, no tocar nada
+    if [ -z "$SMTP_HOST" ] && [ -z "$SMTP_PORT" ] && [ -z "$SMTP_FROM" ]  && \
+       [ -z "$SMTP_USER" ] && [ -z "$SMTP_PASS" ] && [ -z "$SMTP_ACCOUNT" ] && \
+       [ -z "$SMTP_STARTTLS" ] && [ -z "$SMTP_LOGFILE" ]; then
         return 0
     fi
 
-    local msmtprc="/etc/msmtprc"
-
-    # Contenido esperado segun las variables actuales
-    local contenido_esperado
-    contenido_esperado=$(cat <<EOF
+    # Si el archivo no existe, necesitamos todas las variables para crearlo
+    if [ ! -f "$msmtprc" ]; then
+        if [ -z "$SMTP_HOST" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_FROM" ] || \
+           [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ] || [ -z "$SMTP_ACCOUNT" ]; then
+            _log "AVISO: /etc/msmtprc no existe y faltan variables SMTP_*. No se creara el archivo."
+            _log "       Rellena todas las variables SMTP_* o crea /etc/msmtprc manualmente."
+            return 1
+        fi
+        _log "$msmtprc no existe. Creando configuracion SMTP desde cero..."
+        cat > "$msmtprc" <<EOF
 defaults
 auth           on
 tls            on
-tls_starttls   ${SMTP_STARTTLS}
-logfile        ${SMTP_LOGFILE}
+tls_starttls   ${SMTP_STARTTLS:-off}
+logfile        ${SMTP_LOGFILE:-/var/log/msmtp.log}
 
 account        ${SMTP_ACCOUNT}
 host           ${SMTP_HOST}
@@ -145,24 +154,52 @@ password       ${SMTP_PASS}
 
 account default : ${SMTP_ACCOUNT}
 EOF
-)
-
-    # Comparar con el contenido actual (si el archivo existe)
-    if [ -f "$msmtprc" ]; then
-        local contenido_actual
-        contenido_actual=$(cat "$msmtprc")
-        if [ "$contenido_actual" = "$contenido_esperado" ]; then
-            # Configuracion ya actualizada, nada que hacer
-            return 0
-        fi
-        _log "Configuracion SMTP ha cambiado. Actualizando $msmtprc..."
-    else
-        _log "$msmtprc no existe. Creando configuracion SMTP..."
+        chmod 600 "$msmtprc"
+        _log "Archivo $msmtprc creado y permisos establecidos (600)."
+        return 0
     fi
 
-    printf '%s\n' "$contenido_esperado" > "$msmtprc"
-    chmod 600 "$msmtprc"
-    _log "Archivo $msmtprc escrito y permisos establecidos (600)."
+    # El archivo existe: copiar y sobreescribir solo los campos con variable definida
+    local tmp="${msmtprc}.tmp.$$"
+    cp "$msmtprc" "$tmp"
+
+    # tls_starttls: linea unica en el bloque defaults
+    [ -n "$SMTP_STARTTLS" ] && \
+        sed -i "s/^\(tls_starttls[[:space:]]\+\).*/\1${SMTP_STARTTLS}/" "$tmp"
+
+    # logfile: usa | como separador por si la ruta contiene /
+    [ -n "$SMTP_LOGFILE" ] && \
+        sed -i "s|^\(logfile[[:space:]]\+\).*|\1${SMTP_LOGFILE}|" "$tmp"
+
+    # host, port, from, user, password: lineas unicas en el bloque account
+    [ -n "$SMTP_HOST" ] && \
+        sed -i "s/^\(host[[:space:]]\+\).*/\1${SMTP_HOST}/" "$tmp"
+    [ -n "$SMTP_PORT" ] && \
+        sed -i "s/^\(port[[:space:]]\+\).*/\1${SMTP_PORT}/" "$tmp"
+    [ -n "$SMTP_FROM" ] && \
+        sed -i "s/^\(from[[:space:]]\+\).*/\1${SMTP_FROM}/" "$tmp"
+    [ -n "$SMTP_USER" ] && \
+        sed -i "s/^\(user[[:space:]]\+\).*/\1${SMTP_USER}/" "$tmp"
+    [ -n "$SMTP_PASS" ] && \
+        sed -i "s/^\(password[[:space:]]\+\).*/\1${SMTP_PASS}/" "$tmp"
+
+    # account aparece en dos lineas con formatos distintos, se tratan por separado:
+    #   "account        nombre"      -> nombre de la cuenta
+    #   "account default : nombre"   -> referencia al nombre de la cuenta
+    if [ -n "$SMTP_ACCOUNT" ]; then
+        sed -i "/^account default/! s/^\(account[[:space:]]\+\).*/\1${SMTP_ACCOUNT}/" "$tmp"
+        sed -i "s/^\(account default : \).*/\1${SMTP_ACCOUNT}/" "$tmp"
+    fi
+
+    # Aplicar solo si hubo cambios reales
+    if ! diff -q "$msmtprc" "$tmp" > /dev/null 2>&1; then
+        mv "$tmp" "$msmtprc"
+        chmod 600 "$msmtprc"
+        _log "Archivo $msmtprc actualizado con los campos modificados."
+    else
+        rm -f "$tmp"
+        _log "Configuracion SMTP sin cambios. No se modifico $msmtprc."
+    fi
 }
 
 # --------------------------------------------------------------------
